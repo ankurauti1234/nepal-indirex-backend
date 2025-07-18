@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Event {
+  id        Int      @id @default(autoincrement())
+  deviceId  String   @map("deviceid")
+  timestamp BigInt
+  type      Int
+  details   Json
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("events")
+}
+
+model LabeledEvent {
+  id           Int      @id @default(autoincrement())
+  deviceId     String   @map("deviceid")
+  originalEventId Int   @map("original_event_id")
+  timestamp    BigInt
+  details      Json     // Contains original event details plus labels
+  labeledBy    String?  @map("labeled_by") // User who labeled the event
+  labeledAt    DateTime @default(now()) @map("labeled_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  
+  @@map("labeled_events")
+}
