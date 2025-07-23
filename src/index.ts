@@ -39,7 +39,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(morgan('combined'));
-app.use(express.json({ limit: '50mb' })); // Increased limit for testing
+app.use(express.json({ limit: '500mb' })); // Increased limit for testing
 app.use(express.urlencoded({ extended: true }));
 
 // Debug middleware to log parsed body

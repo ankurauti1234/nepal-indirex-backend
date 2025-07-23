@@ -20,21 +20,31 @@ model Event {
   id        Int      @id @default(autoincrement())
   deviceId  String   @map("deviceid")
   timestamp BigInt
-  type      Int
+  type      Int // Represents event type codes (e.g., 29 for Recognized, 33 for Unrecognized)
   details   Json
   createdAt DateTime @default(now()) @map("created_at")
+
   @@map("events")
 }
 
 model LabeledEvent {
-  id           Int      @id @default(autoincrement())
-  deviceId     String   @map("deviceid")
-  originalEventId Int   @map("original_event_id")
-  timestamp    BigInt
-  details      Json     // Contains original event details plus labels
-  labeledBy    String?  @map("labeled_by") // User who labeled the event
-  labeledAt    DateTime @default(now()) @map("labeled_at")
-  createdAt    DateTime @default(now()) @map("created_at")
+  id              Int      @id @default(autoincrement())
+  deviceId        String   @map("deviceid")
+  originalEventId Int      @map("original_event_id")
+  timestamp       BigInt
+  date            String?   // YYYYMMDD format, derived from timestamp
+  begin           String?   // HHMMSS format, derived from timestamp
+  format          String?  // 2-digit code, optional
+  content         String?  // 3-digit code, optional
+  title           String?  // Program title
+  episodeId       String?  @map("episode_id") // Optional, for Program Content
+  seasonId        String?  @map("season_id") // Optional, for Program Content
+  repeat          Boolean  @default(false) // Y/N if repeated broadcast
+  detectionType   String   @default("unknown") @map("detection_type") // Program Content, Commercial Break, etc.
+  details         Json     // Additional metadata (e.g., song details, error type)
+  labeledBy       String?  @map("labeled_by")
+  labeledAt       DateTime @default(now()) @map("labeled_at")
+  createdAt       DateTime @default(now()) @map("created_at")
   
   @@map("labeled_events")
 }

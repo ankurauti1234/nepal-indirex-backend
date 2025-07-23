@@ -110,5 +110,10 @@ See `.env.example` for all available environment variables.
 ### License
 
 This project is licensed under the MIT License.
-# nepal-indirex
-# nepal-indirex
+
+---
+### Options for labeling
+
+break advertisements, program, song, sponsor advertisements, overlays advertisements, error, channel promo.
+
+---
