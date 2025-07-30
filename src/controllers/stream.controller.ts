@@ -354,6 +354,17 @@ export const labelEvent = async (
       return;
     }
 
+    // Validate AWS credentials
+    if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+      logger.error('AWS credentials are missing');
+      res.status(500).json({
+        success: false,
+        message: 'Server configuration error',
+        error: 'AWS credentials are not configured',
+      });
+      return;
+    }
+
     // Validate optional fields
     if (format && !/^\d{2}$/.test(format)) {
       res.status(400).json({
@@ -475,6 +486,7 @@ export const labelEvent = async (
       const originalKey = extractS3Key(eventDetails.image_path);
       const labeledKey = generateLabeledImagePath(eventDetails.image_path);
 
+      logger.info(`Copying from ${S3_BUCKET}/${originalKey} to ${S3_BUCKET}/${labeledKey}`);
       try {
         await s3Client.send(
           new CopyObjectCommand({
@@ -484,10 +496,7 @@ export const labelEvent = async (
           })
         );
       } catch (s3Error) {
-        logger.error(
-          `S3 error during image copy for event ID ${eventId}:`,
-          s3Error
-        );
+        logger.error(`S3 error during image copy for event ID ${eventId}:`, s3Error);
         res.status(500).json({
           success: false,
           message: `Failed to copy image for event ID ${eventId}`,
