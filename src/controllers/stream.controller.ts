@@ -5,6 +5,7 @@ import { S3Client, CopyObjectCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { ApiResponse, PaginatedResponse, PaginationQuery } from '../types';
 
+// Existing interfaces (unchanged)
 interface EventFilter {
   deviceId?: string;
   type?: { in: number[] };
@@ -30,7 +31,7 @@ interface EventDetails {
   score: number;
   image_path: string;
   channel_name: string;
-  duration?: number; // Calculated on backend for display
+  duration?: number;
 }
 
 interface LabelEventRequest {
@@ -42,11 +43,11 @@ interface LabelEventRequest {
     | 'Auto-promo'
     | 'Song'
     | 'Error';
-  format?: string; // 2-digit code
-  content?: string; // 3-digit code
+  format?: string;
+  content?: string;
   title?: string;
-  episodeId?: string; // Only for Program Content
-  seasonId?: string; // Only for Program Content
+  episodeId?: string;
+  seasonId?: string;
   repeat: boolean;
   labeledBy?: string;
   programContentDetails?: {
@@ -104,7 +105,6 @@ interface LabelEventRequest {
   errorDetails?: { errorType?: 'Signal Lost' | 'Blank Image' };
 }
 
-// Interface for LabeledEvent based on Prisma schema and selected fields
 interface LabeledEvent {
   id: number;
   deviceId: string;
@@ -146,9 +146,9 @@ function formatTimestamp(timestamp: bigint): { date: string; begin: string } {
     month: 'short',
     year: 'numeric',
   };
-  const date = dateObj.toLocaleDateString('en-GB', options); // e.g., "23 Jul 2025"
+  const date = dateObj.toLocaleDateString('en-GB', options);
 
-  const begin = dateObj.toLocaleTimeString('en-GB', { hour12: false }); // e.g., "11:45:33"
+  const begin = dateObj.toLocaleTimeString('en-GB', { hour12: false });
 
   return { date, begin };
 }
@@ -189,7 +189,7 @@ function generateLabeledImagePath(originalPath: string): string {
     /Nepal_Frames\/(unrecognized_frames|analayzed_frames)/,
     'Nepal_Frames/labeled_frames'
   );
-  return labeledKey;
+  return `https://${S3_BUCKET}.s3.${region}.amazonaws.com/${labeledKey}`;
 }
 
 export const getEvents = async (
@@ -457,35 +457,63 @@ export const labelEvent = async (
       return;
     }
 
-    const labeledEvents = [];
-    for (const eventId of eventIds) {
-      const originalEvent = await prisma.event.findUnique({
-        where: { id: eventId },
+    // Fetch all events for the provided eventIds
+    const originalEvents = await prisma.event.findMany({
+      where: { id: { in: eventIds } },
+      select: {
+        id: true,
+        deviceId: true,
+        timestamp: true,
+        details: true,
+      },
+    });
+
+    if (originalEvents.length !== eventIds.length) {
+      const missingIds = eventIds.filter(
+        (id) => !originalEvents.some((e) => e.id === id)
+      );
+      res.status(404).json({
+        success: false,
+        message: `Events with IDs ${missingIds.join(', ')} not found`,
+        error: 'Some events do not exist',
       });
+      return;
+    }
 
-      if (!originalEvent) {
-        res.status(404).json({
-          success: false,
-          message: `Event with ID ${eventId} not found`,
-          error: 'Event does not exist',
-        });
-        return;
-      }
+    // Sort events by timestamp to determine start and end
+    const sortedEvents = originalEvents.sort(
+      (a, b) => Number(a.timestamp) - Number(b.timestamp)
+    );
 
-      const eventDetails = validateEventDetails(originalEvent.details);
+    // Initialize single group for all events
+    const group: any = {
+      deviceId: sortedEvents[0].deviceId,
+      originalEventIds: sortedEvents.map((e) => e.id),
+      timestampStart: sortedEvents[0].timestamp,
+      timestampEnd: sortedEvents[sortedEvents.length - 1].timestamp,
+      images: [],
+      details: {},
+    };
+
+    // Process each event for image copying and validation
+    for (const event of sortedEvents) {
+      const eventDetails = validateEventDetails(event.details);
       if (!eventDetails) {
         res.status(400).json({
           success: false,
-          message: `Invalid event details for event ID ${eventId}`,
+          message: `Invalid event details for event ID ${event.id}`,
           error: 'Event details do not contain required image information',
         });
         return;
       }
 
-      const { date, begin } = formatTimestamp(originalEvent.timestamp);
       const originalKey = extractS3Key(eventDetails.image_path);
-      const labeledKey = generateLabeledImagePath(eventDetails.image_path);
+      const labeledKey = originalKey.replace(
+        /Nepal_Frames\/(unrecognized_frames|analayzed_frames)/,
+        'Nepal_Frames/labeled_frames'
+      );
 
+      // Copy image to labeled_frames
       logger.info(`Copying from ${S3_BUCKET}/${originalKey} to ${S3_BUCKET}/${labeledKey}`);
       try {
         await s3Client.send(
@@ -496,72 +524,94 @@ export const labelEvent = async (
           })
         );
       } catch (s3Error) {
-        logger.error(`S3 error during image copy for event ID ${eventId}:`, s3Error);
+        logger.error(`S3 error during image copy for event ID ${event.id}:`, s3Error);
         res.status(500).json({
           success: false,
-          message: `Failed to copy image for event ID ${eventId}`,
+          message: `Failed to copy image for event ID ${event.id}`,
           error:
             s3Error instanceof Error ? s3Error.message : 'S3 operation failed',
         });
         return;
       }
 
-      const labeledEventDetails = {
-        ...eventDetails,
-        original_image_path: eventDetails.image_path,
-        image_path: labeledKey,
-        ...(detectionType === 'Program Content'
-          ? {
-              ...programContentDetails,
-              episodeId: episodeId || programContentDetails?.episodeId,
-              seasonId: seasonId || programContentDetails?.seasonId,
-            }
-          : {}),
-        ...(detectionType === 'Commercial Break' ? commercialBreakDetails : {}),
-        ...(detectionType === 'Spots outside breaks'
-          ? spotsOutsideBreaksDetails
-          : {}),
-        ...(detectionType === 'Auto-promo' ? autoPromoDetails : {}),
-        ...(detectionType === 'Song' ? songDetails : {}),
-        ...(detectionType === 'Error' ? errorDetails : {}),
-      };
+      // Add labeled image path to group
+      group.images.push(`https://${S3_BUCKET}.s3.${region}.amazonaws.com/${labeledKey}`);
 
-      const labeledEvent = await prisma.labeledEvent.create({
-        data: {
-          deviceId: originalEvent.deviceId,
-          originalEventId: originalEvent.id,
-          timestamp: originalEvent.timestamp,
-          date,
-          begin,
-          format: format || null,
-          content: content || null,
-          title: title || null,
-          episodeId:
-            detectionType === 'Program Content'
-              ? episodeId || programContentDetails?.episodeId || null
-              : null,
-          seasonId:
-            detectionType === 'Program Content'
-              ? seasonId || programContentDetails?.seasonId || null
-              : null,
-          repeat,
-          detectionType,
-          details: labeledEventDetails,
-          labeledBy: labeledBy || null,
-        },
-      });
-
-      labeledEvents.push({
-        ...labeledEvent,
-        timestamp: labeledEvent.timestamp.toString(),
-        labeledAt: labeledEvent.labeledAt.toISOString(),
-        createdAt: labeledEvent.createdAt.toISOString(),
-      });
+      // Use the first event's details as base for the group
+      if (event.id === sortedEvents[0].id) {
+        group.details = {
+          ...eventDetails,
+          original_image_path: eventDetails.image_path,
+          image_path: `https://${S3_BUCKET}.s3.${region}.amazonaws.com/${labeledKey}`,
+        };
+      }
     }
+
+    // Format timestamp for the group
+    const { date, begin } = formatTimestamp(group.timestampStart);
+
+    // Create labeled event details
+    const labeledEventDetails = {
+      ...group.details,
+      images: group.images,
+      duration: calculateDuration(sortedEvents),
+      ...(detectionType === 'Program Content'
+        ? {
+            ...programContentDetails,
+            episodeId: episodeId || programContentDetails?.episodeId,
+            seasonId: seasonId || programContentDetails?.seasonId,
+          }
+        : {}),
+      ...(detectionType === 'Commercial Break' ? commercialBreakDetails : {}),
+      ...(detectionType === 'Spots outside breaks'
+        ? spotsOutsideBreaksDetails
+        : {}),
+      ...(detectionType === 'Auto-promo' ? autoPromoDetails : {}),
+      ...(detectionType === 'Song' ? songDetails : {}),
+      ...(detectionType === 'Error' ? errorDetails : {}),
+    };
+
+    // Create a single labeled event for the group
+    const labeledEvent = await prisma.labeledEvent.create({
+      data: {
+        deviceId: group.deviceId,
+        originalEventId: sortedEvents[0].id, // Store the first event ID as reference
+        timestamp: group.timestampStart,
+        date,
+        begin,
+        format: format || null,
+        content: content || null,
+        title: title || null,
+        episodeId:
+          detectionType === 'Program Content'
+            ? episodeId || programContentDetails?.episodeId || null
+            : null,
+        seasonId:
+          detectionType === 'Program Content'
+            ? seasonId || programContentDetails?.seasonId || null
+            : null,
+        repeat,
+        detectionType,
+        details: labeledEventDetails,
+        labeledBy: labeledBy || null,
+      },
+    });
+
+    // Prepare response
+    const labeledEvents = [{
+      ...labeledEvent,
+      timestamp: labeledEvent.timestamp.toString(),
+      timestampStart: group.timestampStart.toString(),
+      timestampEnd: group.timestampEnd.toString(),
+      labeledAt: labeledEvent.labeledAt.toISOString(),
+      createdAt: labeledEvent.createdAt.toISOString(),
+      originalEventIds: group.originalEventIds,
+      images: group.images,
+    }];
 
     res.status(201).json({
       success: true,
-      message: 'Events labeled successfully',
+      message: 'Events labeled successfully as a single group',
       data: labeledEvents,
     });
   } catch (error) {
@@ -694,17 +744,21 @@ export const getManuallyLabeledEvents = async (
         prev.details.errorType === curr.details.errorType &&
         Math.abs(Number(prev.timestamp) - Number(curr.timestamp)) <= 60;
 
+      const images = event.details && typeof event.details === 'object' && 'images' in event.details
+        ? Array.isArray(event.details.images) ? event.details.images : [event.details.images]
+        : [eventDetails.image_path];
+
       if (!currentGroup) {
         currentGroup = {
           ...event,
           timestampStart: event.timestamp.toString(),
           timestampEnd: event.timestamp.toString(),
-          images: [eventDetails.image_path],
+          images,
           details: { ...eventDetails, duration: calculateDuration([event]) },
         };
       } else if (isSimilar(currentGroup, { ...event, details: eventDetails })) {
         currentGroup.timestampEnd = event.timestamp.toString();
-        currentGroup.images.push(eventDetails.image_path);
+        currentGroup.images = currentGroup.images.concat(images);
         currentGroup.details.duration = calculateDuration([
           ...combinedEvents,
           currentGroup,
@@ -716,7 +770,7 @@ export const getManuallyLabeledEvents = async (
           ...event,
           timestampStart: event.timestamp.toString(),
           timestampEnd: event.timestamp.toString(),
-          images: [eventDetails.image_path],
+          images,
           details: { ...eventDetails, duration: calculateDuration([event]) },
         };
       }
@@ -877,17 +931,21 @@ export const getLabeledEvents = async (
         prev.details.errorType === curr.details.errorType &&
         Math.abs(Number(prev.timestamp) - Number(curr.timestamp)) <= 60;
 
+      const images = event.details && typeof event.details === 'object' && 'images' in event.details
+        ? Array.isArray(event.details.images) ? event.details.images : [event.details.images]
+        : [eventDetails.image_path];
+
       if (!currentGroup) {
         currentGroup = {
           ...event,
           timestampStart: event.timestamp.toString(),
           timestampEnd: event.timestamp.toString(),
-          images: [eventDetails.image_path],
+          images,
           details: { ...eventDetails, duration: calculateDuration([event]) },
         };
       } else if (isSimilar(currentGroup, { ...event, details: eventDetails })) {
         currentGroup.timestampEnd = event.timestamp.toString();
-        currentGroup.images.push(eventDetails.image_path);
+        currentGroup.images = currentGroup.images.concat(images);
         currentGroup.details.duration = calculateDuration([
           ...combinedEvents,
           currentGroup,
@@ -899,7 +957,7 @@ export const getLabeledEvents = async (
           ...event,
           timestampStart: event.timestamp.toString(),
           timestampEnd: event.timestamp.toString(),
-          images: [eventDetails.image_path],
+          images,
           details: { ...eventDetails, duration: calculateDuration([event]) },
         };
       }
