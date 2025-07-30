@@ -17,14 +17,13 @@ interface LabeledEventFilter extends PaginationQuery {
   detectionType?: string;
   startDate?: string;
   endDate?: string;
-        page?: number,
-      limit?:number,
-      sort?: 'labeledAt' | 'createdAt',
-      order?:'desc' | 'asc',
-
-            date?: string,
-      startTime?: string,
-      endTime?: string,
+  page?: number;
+  limit?: number;
+  sort?: 'labeledAt' | 'createdAt';
+  order?: 'desc' | 'asc';
+  date?: string;
+  startTime?: string;
+  endTime?: string;
 }
 
 interface EventDetails {
@@ -36,7 +35,13 @@ interface EventDetails {
 
 interface LabelEventRequest {
   eventIds: number[];
-  detectionType: 'Program Content' | 'Commercial Break' | 'Spots outside breaks' | 'Auto-promo' | 'Song' | 'Error';
+  detectionType:
+    | 'Program Content'
+    | 'Commercial Break'
+    | 'Spots outside breaks'
+    | 'Auto-promo'
+    | 'Song'
+    | 'Error';
   format?: string; // 2-digit code
   content?: string; // 3-digit code
   title?: string;
@@ -46,16 +51,48 @@ interface LabelEventRequest {
   labeledBy?: string;
   programContentDetails?: {
     description?: string;
-    formatType?: 'Film' | 'Series' | 'Structured Studio Programs' | 'Interactive Programs' | 'Artistic Performances';
-    contentType?: 'Popular Drama / Comedy' | 'Animation Film' | 'Documentary Film' | 'Short Film' | 'Other Film' |
-                  'General News' | 'Animation Series / Cartoon' | 'Documentary Series' | 'Docusoap / Reality Series' |
-                  'Other Series' | 'Science / Geography' | 'Lifestyle: Showbiz, Stars' | 'Entertainment: Humor';
+    formatType?:
+      | 'Film'
+      | 'Series'
+      | 'Structured Studio Programs'
+      | 'Interactive Programs'
+      | 'Artistic Performances';
+    contentType?:
+      | 'Popular Drama / Comedy'
+      | 'Animation Film'
+      | 'Documentary Film'
+      | 'Short Film'
+      | 'Other Film'
+      | 'General News'
+      | 'Animation Series / Cartoon'
+      | 'Documentary Series'
+      | 'Docusoap / Reality Series'
+      | 'Other Series'
+      | 'Science / Geography'
+      | 'Lifestyle: Showbiz, Stars'
+      | 'Entertainment: Humor';
     episodeId?: string;
     seasonId?: string;
   };
-  commercialBreakDetails?: {};
-  spotsOutsideBreaksDetails?: { formatType?: 'BB' | 'CAPB' | 'OOBS' };
-  autoPromoDetails?: { contentType?: 'Foreign' | 'Other Advertising' | 'Sports: Football' | 'Tele-shopping' | 'Other / Mixed / Unknown' };
+  commercialBreakDetails?: {
+    category?: string;
+    sector?: string;
+  };
+  spotsOutsideBreaksDetails?: {
+    formatType?: 'BB' | 'CAPB' | 'OOBS';
+    category?: string;
+    sector?: string;
+  };
+  autoPromoDetails?: {
+    contentType?:
+      | 'Foreign'
+      | 'Other Advertising'
+      | 'Sports: Football'
+      | 'Tele-shopping'
+      | 'Other / Mixed / Unknown';
+    category?: string;
+    sector?: string;
+  };
   songDetails?: {
     songName?: string;
     movieNameOrAlbumName?: string;
@@ -67,10 +104,28 @@ interface LabelEventRequest {
   errorDetails?: { errorType?: 'Signal Lost' | 'Blank Image' };
 }
 
-const region = process.env.AWS_REGION;
-if (!region) {
-  throw new Error('AWS_REGION environment variable is not set');
+// Interface for LabeledEvent based on Prisma schema and selected fields
+interface LabeledEvent {
+  id: number;
+  deviceId: string;
+  originalEventId: number;
+  timestamp: bigint;
+  date: string | null;
+  begin: string | null;
+  format: string | null;
+  content: string | null;
+  title: string | null;
+  episodeId: string | null;
+  seasonId: string | null;
+  repeat: boolean;
+  detectionType: string;
+  details: Prisma.JsonValue;
+  labeledBy: string | null;
+  labeledAt: Date;
+  createdAt: Date;
 }
+
+const region = 'ap-south-1';
 
 const s3Client = new S3Client({
   region,
@@ -98,11 +153,12 @@ function formatTimestamp(timestamp: bigint): { date: string; begin: string } {
   return { date, begin };
 }
 
-
 // Helper function to calculate duration between two timestamps (in seconds)
 function calculateDuration(events: any[]): number {
   if (events.length <= 1) return 0;
-  const timestamps = events.map(e => Number(e.timestamp)).sort((a, b) => a - b);
+  const timestamps = events
+    .map((e) => Number(e.timestamp))
+    .sort((a, b) => a - b);
   return timestamps[timestamps.length - 1] - timestamps[0];
 }
 
@@ -148,12 +204,18 @@ export const getEvents = async (
       type,
       page = 1,
       limit = 10,
-      sort = 'createdAt',
+      sort = 'timestamp',
       order = 'desc',
       date,
       startTime,
       endTime,
-    } = req.query as PaginationQuery & { deviceId?: string; type?: string; date?: string; startTime?: string; endTime?: string };
+    } = req.query as PaginationQuery & {
+      deviceId?: string;
+      type?: string;
+      date?: string;
+      startTime?: string;
+      endTime?: string;
+    };
 
     const pageNum = parseInt(page as unknown as string, 10) || 1;
     const limitNum = parseInt(limit as unknown as string, 10) || 10;
@@ -224,7 +286,10 @@ export const getEvents = async (
       return {
         ...event,
         timestamp: event.timestamp.toString(),
-        details: { ...(typeof details === 'object' && details !== null ? details : {}), duration: calculateDuration([event]) },
+        details: {
+          ...(typeof details === 'object' && details !== null ? details : {}),
+          duration: calculateDuration([event]),
+        },
         date,
         begin,
       };
@@ -275,7 +340,12 @@ export const labelEvent = async (
       errorDetails,
     } = req.body as LabelEventRequest;
 
-    if (!eventIds || !Array.isArray(eventIds) || eventIds.length === 0 || !detectionType) {
+    if (
+      !eventIds ||
+      !Array.isArray(eventIds) ||
+      eventIds.length === 0 ||
+      !detectionType
+    ) {
       res.status(400).json({
         success: false,
         message: 'Event IDs and detection type are required',
@@ -301,23 +371,37 @@ export const labelEvent = async (
       });
       return;
     }
-    if (detectionType === 'Program Content' && (!programContentDetails || !programContentDetails.description || !programContentDetails.formatType || !programContentDetails.contentType)) {
+    if (
+      detectionType === 'Program Content' &&
+      (!programContentDetails ||
+        !programContentDetails.description ||
+        !programContentDetails.formatType ||
+        !programContentDetails.contentType)
+    ) {
       res.status(400).json({
         success: false,
-        message: 'Program content details (description, formatType, contentType) are required for Program Content detection type',
+        message:
+          'Program content details (description, formatType, contentType) are required for Program Content detection type',
         error: 'Invalid program content details',
       });
       return;
     }
-    if (detectionType === 'Spots outside breaks' && (!spotsOutsideBreaksDetails || !spotsOutsideBreaksDetails.formatType)) {
+    if (
+      detectionType === 'Spots outside breaks' &&
+      (!spotsOutsideBreaksDetails || !spotsOutsideBreaksDetails.formatType)
+    ) {
       res.status(400).json({
         success: false,
-        message: 'Format type is required for Spots outside breaks detection type',
+        message:
+          'Format type is required for Spots outside breaks detection type',
         error: 'Invalid spots outside breaks details',
       });
       return;
     }
-    if (detectionType === 'Auto-promo' && (!autoPromoDetails || !autoPromoDetails.contentType)) {
+    if (
+      detectionType === 'Auto-promo' &&
+      (!autoPromoDetails || !autoPromoDetails.contentType)
+    ) {
       res.status(400).json({
         success: false,
         message: 'Content type is required for Auto-promo detection type',
@@ -325,15 +409,22 @@ export const labelEvent = async (
       });
       return;
     }
-    if (detectionType === 'Song' && (!songDetails || !songDetails.songName || !songDetails.artistName)) {
+    if (
+      detectionType === 'Song' &&
+      (!songDetails || !songDetails.songName || !songDetails.artistName)
+    ) {
       res.status(400).json({
         success: false,
-        message: 'Song details (songName, artistName) are required for Song detection type',
+        message:
+          'Song details (songName, artistName) are required for Song detection type',
         error: 'Invalid song details',
       });
       return;
     }
-    if (detectionType === 'Error' && (!errorDetails || !errorDetails.errorType)) {
+    if (
+      detectionType === 'Error' &&
+      (!errorDetails || !errorDetails.errorType)
+    ) {
       res.status(400).json({
         success: false,
         message: 'Error type is required for Error detection type',
@@ -341,10 +432,15 @@ export const labelEvent = async (
       });
       return;
     }
-    if (detectionType === 'Program Content' && (episodeId || seasonId) && !programContentDetails) {
+    if (
+      detectionType === 'Program Content' &&
+      (episodeId || seasonId) &&
+      !programContentDetails
+    ) {
       res.status(400).json({
         success: false,
-        message: 'Program content details are required when episodeId or seasonId is provided',
+        message:
+          'Program content details are required when episodeId or seasonId is provided',
         error: 'Invalid program content details',
       });
       return;
@@ -388,11 +484,15 @@ export const labelEvent = async (
           })
         );
       } catch (s3Error) {
-        logger.error(`S3 error during image copy for event ID ${eventId}:`, s3Error);
+        logger.error(
+          `S3 error during image copy for event ID ${eventId}:`,
+          s3Error
+        );
         res.status(500).json({
           success: false,
           message: `Failed to copy image for event ID ${eventId}`,
-          error: s3Error instanceof Error ? s3Error.message : 'S3 operation failed',
+          error:
+            s3Error instanceof Error ? s3Error.message : 'S3 operation failed',
         });
         return;
       }
@@ -401,13 +501,17 @@ export const labelEvent = async (
         ...eventDetails,
         original_image_path: eventDetails.image_path,
         image_path: labeledKey,
-        ...(detectionType === 'Program Content' ? {
-          ...programContentDetails,
-          episodeId: episodeId || programContentDetails?.episodeId,
-          seasonId: seasonId || programContentDetails?.seasonId,
-        } : {}),
+        ...(detectionType === 'Program Content'
+          ? {
+              ...programContentDetails,
+              episodeId: episodeId || programContentDetails?.episodeId,
+              seasonId: seasonId || programContentDetails?.seasonId,
+            }
+          : {}),
         ...(detectionType === 'Commercial Break' ? commercialBreakDetails : {}),
-        ...(detectionType === 'Spots outside breaks' ? spotsOutsideBreaksDetails : {}),
+        ...(detectionType === 'Spots outside breaks'
+          ? spotsOutsideBreaksDetails
+          : {}),
         ...(detectionType === 'Auto-promo' ? autoPromoDetails : {}),
         ...(detectionType === 'Song' ? songDetails : {}),
         ...(detectionType === 'Error' ? errorDetails : {}),
@@ -423,8 +527,14 @@ export const labelEvent = async (
           format: format || null,
           content: content || null,
           title: title || null,
-          episodeId: detectionType === 'Program Content' ? (episodeId || programContentDetails?.episodeId || null) : null,
-          seasonId: detectionType === 'Program Content' ? (seasonId || programContentDetails?.seasonId || null) : null,
+          episodeId:
+            detectionType === 'Program Content'
+              ? episodeId || programContentDetails?.episodeId || null
+              : null,
+          seasonId:
+            detectionType === 'Program Content'
+              ? seasonId || programContentDetails?.seasonId || null
+              : null,
           repeat,
           detectionType,
           details: labeledEventDetails,
@@ -543,7 +653,9 @@ export const getManuallyLabeledEvents = async (
     const combinedEvents: any[] = [];
     let currentGroup: any = null;
 
-    for (const event of labeledEvents.sort((a, b) => Number(a.timestamp) - Number(b.timestamp))) {
+    for (const event of labeledEvents.sort(
+      (a: LabeledEvent, b: LabeledEvent) => Number(a.timestamp) - Number(b.timestamp)
+    )) {
       const eventDetails = validateEventDetails(event.details);
       if (!eventDetails) continue;
 
@@ -561,8 +673,11 @@ export const getManuallyLabeledEvents = async (
         prev.details.description === curr.details.description &&
         prev.details.formatType === curr.details.formatType &&
         prev.details.contentType === curr.details.contentType &&
+        prev.details.category === curr.details.category &&
+        prev.details.sector === curr.details.sector &&
         prev.details.songName === curr.details.songName &&
-        prev.details.movieNameOrAlbumName === curr.details.movieNameOrAlbumName &&
+        prev.details.movieNameOrAlbumName ===
+          curr.details.movieNameOrAlbumName &&
         prev.details.artistName === curr.details.artistName &&
         prev.details.yearOfPublication === curr.details.yearOfPublication &&
         prev.details.genre === curr.details.genre &&
@@ -581,7 +696,11 @@ export const getManuallyLabeledEvents = async (
       } else if (isSimilar(currentGroup, { ...event, details: eventDetails })) {
         currentGroup.timestampEnd = event.timestamp.toString();
         currentGroup.images.push(eventDetails.image_path);
-        currentGroup.details.duration = calculateDuration([...combinedEvents, currentGroup, event]);
+        currentGroup.details.duration = calculateDuration([
+          ...combinedEvents,
+          currentGroup,
+          event,
+        ]);
       } else {
         combinedEvents.push(currentGroup);
         currentGroup = {
@@ -629,211 +748,6 @@ export const getManuallyLabeledEvents = async (
   }
 };
 
-// Other API endpoints (getImageProcessingEvents, getUnrecognizedEvents, getLabeledEvents) follow similar updates for date and time range
-export const getImageProcessingEvents = async (
-  req: Request,
-  res: Response<PaginatedResponse<any>>
-): Promise<void> => {
-  try {
-    logger.info('Get image processing events request query:', req.query);
-
-    const {
-      deviceId,
-      page = 1,
-      limit = 10,
-      sort = 'createdAt',
-      order = 'desc',
-      date,
-      startTime,
-      endTime,
-    } = req.query as PaginationQuery & { deviceId?: string; date?: string; startTime?: string; endTime?: string };
-
-    const pageNum = parseInt(page as unknown as string, 10) || 1;
-    const limitNum = parseInt(limit as unknown as string, 10) || 10;
-    const skip = (pageNum - 1) * limitNum;
-    const validSortFields = ['id', 'timestamp', 'createdAt'];
-    const sortField = validSortFields.includes(sort as string)
-      ? sort
-      : 'timestamp';
-    const orderDirection = order === 'asc' ? 'asc' : 'desc';
-
-    const filter: EventFilter = {
-      type: { in: [29, 33] },
-    };
-    if (deviceId) {
-      filter.deviceId = deviceId as string;
-    }
-    if (date && (startTime || endTime)) {
-      filter.timestamp = {};
-      const baseDate = new Date(date);
-      if (startTime) {
-        const [hours, minutes] = startTime.split(':').map(Number);
-        const startDateTime = new Date(baseDate);
-        startDateTime.setHours(hours, minutes, 0, 0);
-        filter.timestamp.gte = Math.floor(startDateTime.getTime() / 1000);
-      }
-      if (endTime) {
-        const [hours, minutes] = endTime.split(':').map(Number);
-        const endDateTime = new Date(baseDate);
-        endDateTime.setHours(hours, minutes, 0, 0);
-        filter.timestamp.lte = Math.floor(endDateTime.getTime() / 1000);
-      }
-    }
-
-    const [events, total] = await Promise.all([
-      prisma.event.findMany({
-        where: filter,
-        orderBy: { [sortField]: orderDirection },
-        skip,
-        take: limitNum,
-        select: {
-          id: true,
-          deviceId: true,
-          timestamp: true,
-          type: true,
-          details: true,
-          createdAt: true,
-        },
-      }),
-      prisma.event.count({ where: filter }),
-    ]);
-
-    const serializedEvents = events.map((event) => {
-      const { date, begin } = formatTimestamp(event.timestamp);
-      const details = validateEventDetails(event.details) || event.details;
-      return {
-        ...event,
-        timestamp: event.timestamp.toString(),
-        details: { ...(typeof details === 'object' && details !== null ? details : {}), duration: calculateDuration([event]) },
-        date,
-        begin,
-      };
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Image processing events fetched successfully',
-      data: serializedEvents,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        pages: Math.ceil(total / limitNum),
-      },
-    });
-  } catch (error) {
-    logger.error('Error fetching image processing events:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch image processing events',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      pagination: { page: 0, limit: 0, total: 0, pages: 0 },
-    });
-  }
-};
-
-export const getUnrecognizedEvents = async (
-  req: Request,
-  res: Response<PaginatedResponse<any>>
-): Promise<void> => {
-  try {
-    logger.info('Get unrecognized events request query:', req.query);
-
-    const {
-      deviceId,
-      page = 1,
-      limit = 10,
-      sort = 'createdAt',
-      order = 'desc',
-      date,
-      startTime,
-      endTime,
-    } = req.query as PaginationQuery & { deviceId?: string; date?: string; startTime?: string; endTime?: string };
-
-    const pageNum = parseInt(page as unknown as string, 10) || 1;
-    const limitNum = parseInt(limit as unknown as string, 10) || 10;
-    const skip = (pageNum - 1) * limitNum;
-    const validSortFields = ['id', 'timestamp', 'createdAt'];
-    const sortField = validSortFields.includes(sort as string)
-      ? sort
-      : 'timestamp';
-    const orderDirection = order === 'asc' ? 'asc' : 'desc';
-
-    const filter: EventFilter = {
-      type: { in: [33] },
-    };
-    if (deviceId) {
-      filter.deviceId = deviceId as string;
-    }
-    if (date && (startTime || endTime)) {
-      filter.timestamp = {};
-      const baseDate = new Date(date);
-      if (startTime) {
-        const [hours, minutes] = startTime.split(':').map(Number);
-        const startDateTime = new Date(baseDate);
-        startDateTime.setHours(hours, minutes, 0, 0);
-        filter.timestamp.gte = Math.floor(startDateTime.getTime() / 1000);
-      }
-      if (endTime) {
-        const [hours, minutes] = endTime.split(':').map(Number);
-        const endDateTime = new Date(baseDate);
-        endDateTime.setHours(hours, minutes, 0, 0);
-        filter.timestamp.lte = Math.floor(endDateTime.getTime() / 1000);
-      }
-    }
-
-    const [events, total] = await Promise.all([
-      prisma.event.findMany({
-        where: filter,
-        orderBy: { [sortField]: orderDirection },
-        skip,
-        take: limitNum,
-        select: {
-          id: true,
-          deviceId: true,
-          timestamp: true,
-          type: true,
-          details: true,
-          createdAt: true,
-        },
-      }),
-      prisma.event.count({ where: filter }),
-    ]);
-
-    const serializedEvents = events.map((event) => {
-      const { date, begin } = formatTimestamp(event.timestamp);
-      const details = validateEventDetails(event.details) || event.details;
-      return {
-        ...event,
-        timestamp: event.timestamp.toString(),
-        details: { ...(typeof details === 'object' && details !== null ? details : {}), duration: calculateDuration([event]) },
-        date,
-        begin,
-      };
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Unrecognized events fetched successfully',
-      data: serializedEvents,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        pages: Math.ceil(total / limitNum),
-      },
-    });
-  } catch (error) {
-    logger.error('Error fetching unrecognized events:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch unrecognized events',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      pagination: { page: 0, limit: 0, total: 0, pages: 0 },
-    });
-  }
-};
-
 export const getLabeledEvents = async (
   req: Request,
   res: Response<PaginatedResponse<any>>
@@ -847,9 +761,9 @@ export const getLabeledEvents = async (
       detectionType,
       date,
       startTime,
-endTime,
+      endTime,
       page = 1,
-      limit = 10, 
+      limit = 10,
       sort = 'labeledAt',
       order = 'desc',
     } = req.query as LabeledEventFilter;
@@ -922,7 +836,9 @@ endTime,
     const combinedEvents: any[] = [];
     let currentGroup: any = null;
 
-    for (const event of labeledEvents.sort((a, b) => Number(a.timestamp) - Number(b.timestamp))) {
+    for (const event of labeledEvents.sort(
+      (a: LabeledEvent, b: LabeledEvent) => Number(a.timestamp) - Number(b.timestamp)
+    )) {
       const eventDetails = validateEventDetails(event.details);
       if (!eventDetails) continue;
 
@@ -940,8 +856,11 @@ endTime,
         prev.details.description === curr.details.description &&
         prev.details.formatType === curr.details.formatType &&
         prev.details.contentType === curr.details.contentType &&
+        prev.details.category === curr.details.category &&
+        prev.details.sector === curr.details.sector &&
         prev.details.songName === curr.details.songName &&
-        prev.details.movieNameOrAlbumName === curr.details.movieNameOrAlbumName &&
+        prev.details.movieNameOrAlbumName ===
+          curr.details.movieNameOrAlbumName &&
         prev.details.artistName === curr.details.artistName &&
         prev.details.yearOfPublication === curr.details.yearOfPublication &&
         prev.details.genre === curr.details.genre &&
@@ -960,7 +879,11 @@ endTime,
       } else if (isSimilar(currentGroup, { ...event, details: eventDetails })) {
         currentGroup.timestampEnd = event.timestamp.toString();
         currentGroup.images.push(eventDetails.image_path);
-        currentGroup.details.duration = calculateDuration([...combinedEvents, currentGroup, event]);
+        currentGroup.details.duration = calculateDuration([
+          ...combinedEvents,
+          currentGroup,
+          event,
+        ]);
       } else {
         combinedEvents.push(currentGroup);
         currentGroup = {

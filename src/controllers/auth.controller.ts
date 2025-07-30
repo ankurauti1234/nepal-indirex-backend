@@ -8,7 +8,7 @@ const validateRegister = (body: any): { isValid: boolean; error?: string } => {
   if (!body || typeof body !== 'object') {
     return { isValid: false, error: 'Request body is missing or invalid' };
   }
-  const { email, password, name } = body;
+  const { email, password, name, deviceId } = body;
   if (!email || typeof email !== 'string' || !email.includes('@')) {
     return { isValid: false, error: 'Valid email is required' };
   }
@@ -17,6 +17,9 @@ const validateRegister = (body: any): { isValid: boolean; error?: string } => {
   }
   if (name && (typeof name !== 'string' || name.length < 1)) {
     return { isValid: false, error: 'Name must be a non-empty string if provided' };
+  }
+  if (!deviceId || typeof deviceId !== 'string' || deviceId.length < 1) {
+    return { isValid: false, error: 'Device ID is required and must be a non-empty string' };
   }
   return { isValid: true };
 };

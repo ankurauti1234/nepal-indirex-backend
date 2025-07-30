@@ -7,6 +7,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { notFound } from './middleware/notFound';
 import apiRoutes from './routes';
 import { logger } from './utils/logger';
+// import { connectDatabase } from './config/database';
 
 // Load environment variables
 dotenv.config();
@@ -35,8 +36,10 @@ app.use((req, res, next) => {
 // Standard middleware
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
-  credentials: true
+  origin: process.env.CORS_ORIGIN || '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 }));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '500mb' })); // Increased limit for testing
@@ -55,6 +58,8 @@ app.use(process.env.API_PREFIX || '/api/v1', apiRoutes);
 // Error handling middleware
 app.use(notFound);
 app.use(errorHandler);
+
+// connectDatabase()
 
 // Start server
 app.listen(PORT, () => {

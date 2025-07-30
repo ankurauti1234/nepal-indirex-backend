@@ -8,6 +8,7 @@ interface RegisterData {
   email: string;
   password: string;
   name?: string;
+  deviceId: string;
 }
 
 interface LoginData {
@@ -16,7 +17,7 @@ interface LoginData {
 }
 
 export const register = async (data: any): Promise<{ user: Partial<User>; token: string }> => {
-  const { email, password, name } = data;
+  const { email, password, name, deviceId } = data;
   
   // Check if user exists
   const existingUser = await prisma.user.findUnique({ where: { email } });
@@ -33,11 +34,13 @@ export const register = async (data: any): Promise<{ user: Partial<User>; token:
       email,
       password: hashedPassword,
       name,
+      deviceId,
     },
     select: {
       id: true,
       email: true,
       name: true,
+      deviceId: true,
       createdAt: true,
     },
   });
@@ -62,6 +65,7 @@ export const login = async (data: any): Promise<{ user: Partial<User>; token: st
       id: true,
       email: true,
       name: true,
+      deviceId: true,
       password: true,
       createdAt: true,
     },
