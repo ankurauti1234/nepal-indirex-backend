@@ -189,7 +189,7 @@ function generateLabeledImagePath(originalPath: string): string {
     /Nepal_Frames\/(unrecognized_frames|analayzed_frames)/,
     'Nepal_Frames/labeled_frames'
   );
-  return `https://${S3_BUCKET}.s3.${region}.amazonaws.com/${labeledKey}`;
+  return labeledKey;
 }
 
 export const getEvents = async (
