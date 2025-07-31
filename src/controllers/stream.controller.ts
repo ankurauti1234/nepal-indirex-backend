@@ -7,6 +7,7 @@ import { ApiResponse, PaginatedResponse, PaginationQuery } from '../types';
 
 // Existing interfaces (unchanged)
 interface EventFilter {
+  id: { notIn: any[]; };
   deviceId?: string;
   type?: { in: number[] };
   timestamp?: { gte?: number; lte?: number };
@@ -108,7 +109,7 @@ interface LabelEventRequest {
 interface LabeledEvent {
   id: number;
   deviceId: string;
-  originalEventId: number;
+  originalEventIds: number[]; // Changed to array to store multiple event IDs
   timestamp: bigint;
   date: string | null;
   begin: string | null;
@@ -226,7 +227,11 @@ export const getEvents = async (
       : 'timestamp';
     const orderDirection = order === 'asc' ? 'asc' : 'desc';
 
-    const filter: EventFilter = {};
+    const filter: EventFilter = {
+      id: {
+        notIn: []
+      }
+    };
     if (deviceId) {
       filter.deviceId = deviceId as string;
     }
@@ -261,6 +266,14 @@ export const getEvents = async (
         filter.timestamp.lte = Math.floor(endDateTime.getTime() / 1000);
       }
     }
+
+    // Get labeled event IDs to exclude them
+    const labeledEventIds = await prisma.labeledEvent.findMany({
+      select: { originalEventIds: true },
+    }).then(events => events.flatMap(e => e.originalEventIds));
+
+    // Add filter to exclude labeled events
+    filter.id = { notIn: labeledEventIds };
 
     const [events, total] = await Promise.all([
       prisma.event.findMany({
@@ -575,7 +588,7 @@ export const labelEvent = async (
     const labeledEvent = await prisma.labeledEvent.create({
       data: {
         deviceId: group.deviceId,
-        originalEventId: sortedEvents[0].id, // Store the first event ID as reference
+        originalEventIds: group.originalEventIds, // Store all event IDs
         timestamp: group.timestampStart,
         date,
         begin,
@@ -689,7 +702,7 @@ export const getManuallyLabeledEvents = async (
         select: {
           id: true,
           deviceId: true,
-          originalEventId: true,
+          originalEventIds: true,
           timestamp: true,
           date: true,
           begin: true,
@@ -748,30 +761,47 @@ export const getManuallyLabeledEvents = async (
         ? Array.isArray(event.details.images) ? event.details.images : [event.details.images]
         : [eventDetails.image_path];
 
+      // Fetch original events to get all timestamps
+      const originalEvents = await prisma.event.findMany({
+        where: { id: { in: event.originalEventIds } },
+        select: { timestamp: true },
+      });
+
+      const timestamps = originalEvents
+        .map(e => Number(e.timestamp))
+        .sort((a, b) => a - b);
+
       if (!currentGroup) {
         currentGroup = {
           ...event,
-          timestampStart: event.timestamp.toString(),
-          timestampEnd: event.timestamp.toString(),
+          timestampStart: timestamps[0]?.toString() || event.timestamp.toString(),
+          timestampEnd: timestamps[timestamps.length - 1]?.toString() || event.timestamp.toString(),
           images,
-          details: { ...eventDetails, duration: calculateDuration([event]) },
+          details: { ...eventDetails, duration: calculateDuration(originalEvents) },
+          originalEventIds: event.originalEventIds,
         };
       } else if (isSimilar(currentGroup, { ...event, details: eventDetails })) {
-        currentGroup.timestampEnd = event.timestamp.toString();
         currentGroup.images = currentGroup.images.concat(images);
+        currentGroup.originalEventIds = [...new Set([...currentGroup.originalEventIds, ...event.originalEventIds])];
+        // Update timestamps for the group
+        const allTimestamps = [...timestamps, ...originalEvents.map(e => Number(e.timestamp))]
+          .sort((a, b) => a - b);
+        currentGroup.timestampStart = allTimestamps[0].toString();
+        currentGroup.timestampEnd = allTimestamps[allTimestamps.length - 1].toString();
         currentGroup.details.duration = calculateDuration([
           ...combinedEvents,
           currentGroup,
-          event,
+          ...originalEvents,
         ]);
       } else {
         combinedEvents.push(currentGroup);
         currentGroup = {
           ...event,
-          timestampStart: event.timestamp.toString(),
-          timestampEnd: event.timestamp.toString(),
+          timestampStart: timestamps[0]?.toString() || event.timestamp.toString(),
+          timestampEnd: timestamps[timestamps.length - 1]?.toString() || event.timestamp.toString(),
           images,
-          details: { ...eventDetails, duration: calculateDuration([event]) },
+          details: { ...eventDetails, duration: calculateDuration(originalEvents) },
+          originalEventIds: event.originalEventIds,
         };
       }
     }
@@ -876,7 +906,7 @@ export const getLabeledEvents = async (
         select: {
           id: true,
           deviceId: true,
-          originalEventId: true,
+          originalEventIds: true,
           timestamp: true,
           date: true,
           begin: true,
@@ -935,30 +965,47 @@ export const getLabeledEvents = async (
         ? Array.isArray(event.details.images) ? event.details.images : [event.details.images]
         : [eventDetails.image_path];
 
+      // Fetch original events to get all timestamps
+      const originalEvents = await prisma.event.findMany({
+        where: { id: { in: event.originalEventIds } },
+        select: { timestamp: true },
+      });
+
+      const timestamps = originalEvents
+        .map(e => Number(e.timestamp))
+        .sort((a, b) => a - b);
+
       if (!currentGroup) {
         currentGroup = {
           ...event,
-          timestampStart: event.timestamp.toString(),
-          timestampEnd: event.timestamp.toString(),
+          timestampStart: timestamps[0]?.toString() || event.timestamp.toString(),
+          timestampEnd: timestamps[timestamps.length - 1]?.toString() || event.timestamp.toString(),
           images,
-          details: { ...eventDetails, duration: calculateDuration([event]) },
+          details: { ...eventDetails, duration: calculateDuration(originalEvents) },
+          originalEventIds: event.originalEventIds,
         };
       } else if (isSimilar(currentGroup, { ...event, details: eventDetails })) {
-        currentGroup.timestampEnd = event.timestamp.toString();
         currentGroup.images = currentGroup.images.concat(images);
+        currentGroup.originalEventIds = [...new Set([...currentGroup.originalEventIds, ...event.originalEventIds])];
+        // Update timestamps for the group
+        const allTimestamps = [...timestamps, ...originalEvents.map(e => Number(e.timestamp))]
+          .sort((a, b) => a - b);
+        currentGroup.timestampStart = allTimestamps[0].toString();
+        currentGroup.timestampEnd = allTimestamps[allTimestamps.length - 1].toString();
         currentGroup.details.duration = calculateDuration([
           ...combinedEvents,
           currentGroup,
-          event,
+          ...originalEvents,
         ]);
       } else {
         combinedEvents.push(currentGroup);
         currentGroup = {
           ...event,
-          timestampStart: event.timestamp.toString(),
-          timestampEnd: event.timestamp.toString(),
+          timestampStart: timestamps[0]?.toString() || event.timestamp.toString(),
+          timestampEnd: timestamps[timestamps.length - 1]?.toString() || event.timestamp.toString(),
           images,
-          details: { ...eventDetails, duration: calculateDuration([event]) },
+          details: { ...eventDetails, duration: calculateDuration(originalEvents) },
+          originalEventIds: event.originalEventIds,
         };
       }
     }

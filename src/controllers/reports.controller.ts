@@ -107,11 +107,12 @@ export const generateReport = async (
         },
       },
       select: {
-        originalEventId: true,
+        originalEventIds: true,
       },
     });
 
-    const labeledOriginalEventIds = labeledEventIds.map((e) => e.originalEventId);
+    // Fixed: Flatten the array of arrays into a single array of event IDs
+    const labeledOriginalEventIds = labeledEventIds.flatMap((e) => e.originalEventIds);
 
     // Fetch unlabeled events count
     const unlabeledEventsCount = await prisma.event.count({
